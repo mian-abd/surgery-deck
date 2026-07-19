@@ -1,0 +1,27 @@
+# Local full-stack run. Frontend proxies /api and /ws to backend at build time
+# via VITE_API_BASE=http://localhost:8080.
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8080:8080"
+    environment:
+      DB_URL: sqlite:///./orguard.db
+      STORAGE_BACKEND: local
+      CORS_ORIGINS: http://localhost:8081,http://localhost:5173
+    volumes:
+      - ./backend/evidence:/app/evidence
+      - model_cache:/app/models
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE: http://localhost:8080
+    ports:
+      - "8081:80"
+    depends_on:
+      - backend
+
+volumes:
+  model_cache:

@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+evidence/
+orguard.db
+models/*.pt
+tools/
+bus.jpg
+.env

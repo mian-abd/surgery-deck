@@ -1,0 +1,22 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+backend/.env
+backend/orguard.db
+backend/evidence/
+backend/models/*.pt
+backend/models/*.onnx
+
+# Downloaded model weights (auto-fetched on first run)
+backend/*.pt
+backend/*.onnx
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+
+# Misc
+.DS_Store
+*.log
