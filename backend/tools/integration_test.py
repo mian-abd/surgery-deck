@@ -24,9 +24,21 @@ def req(path: str, body=None, method="POST") -> dict:
         return json.loads(resp.read())
 
 
+def _load_test_jpeg() -> bytes:
+    """A real image with people. Prefer a local bus.jpg, else use the one that
+    ships with ultralytics (assets/bus.jpg)."""
+    if os.path.exists("bus.jpg"):
+        with open("bus.jpg", "rb") as f:
+            return f.read()
+    import ultralytics
+
+    p = os.path.join(os.path.dirname(ultralytics.__file__), "assets", "bus.jpg")
+    with open(p, "rb") as f:
+        return f.read()
+
+
 async def main() -> None:
-    with open("bus.jpg", "rb") as f:
-        jpg = f.read()
+    jpg = _load_test_jpeg()
 
     sess = req("/api/sessions", {"procedure_name": "Integration", "room_name": "OR"})
     cam = req("/api/cameras", {"name": "Cam", "camera_type": "overhead"})
@@ -53,7 +65,8 @@ async def main() -> None:
             await ws.send("hello")
             while "det" not in got:
                 m = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
-                if m.get("type") == "frame" and m.get("detections"):
+                # detections now arrive on their own channel (decoupled from frames)
+                if m.get("type") == "detections" and m.get("detections"):
                     got["det"] = m["detections"]
 
     async def camera():

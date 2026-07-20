@@ -34,11 +34,15 @@ def _startup() -> None:
 def health() -> dict:
     from .runtime import get_pipeline
 
+    from . import gemini
+
     return {
         "status": "ok",
         "service": "orguard",
         "perception": get_pipeline() is not None,
         "storage": settings.storage_backend,
+        "gemini": gemini.available(),
+        "gemini_model": gemini.status()["model"],
     }
 
 

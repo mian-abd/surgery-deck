@@ -91,17 +91,66 @@ class ReviewIn(BaseModel):
     note: str = ""
 
 
+class ReviewSummary(BaseModel):
+    """Aggregate of human review decisions for a session."""
+    confirmed: int = 0
+    dismissed: int = 0
+    unclear: int = 0
+    pending: int = 0
+    total: int = 0
+
+
 # --- Report ---
+class CountRow(BaseModel):
+    """Per-instrument-class initial vs final tally."""
+    instrument: str
+    initial: int
+    final: int
+    difference: int  # initial - final (positive => possibly missing)
+
+
 class ReportOut(BaseModel):
     session: SessionOut
+    generated_at: datetime
     duration_minutes: float | None
+
+    # --- instrument counts ---
     initial_counts: dict
     final_counts: dict
     count_difference: dict
-    hygiene_events: int
-    hygiene_violations: int
-    breach_alerts: int
+    count_summary: list[CountRow]
+    initial_total: int
+    final_total: int
+    count_mismatch: bool
+    initial_snapshot: SnapshotOut | None
+    final_snapshot: SnapshotOut | None
+
+    # --- event aggregates ---
+    total_events: int
+    event_counts_by_type: dict
+    hygiene_events: int          # hygiene_ok observations
+    hygiene_violations: int      # hygiene_missing alerts
+    breach_alerts: int           # sterile_breach alerts
+    count_mismatch_alerts: int
+    critical_count: int
+    warning_count: int
+    info_count: int
+
+    # --- review decisions ---
     confirmed_alerts: int
     dismissed_alerts: int
+    unclear_alerts: int
+    pending_alerts: int
+    review_summary: ReviewSummary
+
+    # --- ordered event lists ---
+    events: list[EventOut]            # all events, chronological ascending
+    critical_timeline: list[EventOut] # warning + critical, chronological ascending
+
+    # --- top-line status ---
+    review_required: bool
     overall_status: str
-    critical_timeline: list[EventOut]
+
+    # --- Gemini-generated narrative (None when Gemini is unavailable) ---
+    gemini_summary: str | None = None
+    gemini_key_risks: list[str] = Field(default_factory=list)

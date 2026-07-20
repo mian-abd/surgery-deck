@@ -1,62 +1,116 @@
-# Build + deploy ORGuard to Cloud Run.
-# Substitutions: _REGION, _AR (Artifact Registry repo), _API_URL (backend URL for
-# the frontend build). Run: gcloud builds submit --config deploy/cloudbuild.yaml
+# Build + push both images to Artifact Registry and deploy to Cloud Run.
+#
+# Run (first pass — deploy backend to learn its URL):
+#   gcloud builds submit --config deploy/cloudbuild.yaml \
+#     --substitutions=_REGION=us-central1,_AR=orguard,\
+# _GCS_BUCKET=orguard-evidence-<project>,\
+# _CLOUDSQL_INSTANCE=<project>:us-central1:orguard-db
+#
+# Then re-run with the real URLs so the frontend targets the backend and the
+# backend accepts the frontend's CORS origin:
+#   --substitutions=...,_API_URL=https://orguard-backend-xxx.run.app,\
+# _CORS_ORIGINS=https://orguard-frontend-xxx.run.app
+#
+# See deploy/README.md for the full runbook and the secrets that must exist.
 steps:
-  # --- Backend image ---
-  - name: gcr.io/cloud-builders/docker
-    args: ["build", "-t", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-backend:$SHORT_SHA", "./backend"]
-  - name: gcr.io/cloud-builders/docker
-    args: ["push", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-backend:$SHORT_SHA"]
+  # --- Backend image (CPU torch; see backend/Dockerfile) ---
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-backend:${_TAG}"
+      - "./backend"
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-backend"]
 
-  # --- Frontend image (bakes the backend URL) ---
-  - name: gcr.io/cloud-builders/docker
+  # --- Frontend image (bakes the backend URL for split-service mode) ---
+  - id: build-frontend
+    name: gcr.io/cloud-builders/docker
     args:
       - build
       - "--build-arg"
       - "VITE_API_BASE=${_API_URL}"
       - "-t"
-      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-frontend:$SHORT_SHA"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-frontend:${_TAG}"
       - "./frontend"
-  - name: gcr.io/cloud-builders/docker
-    args: ["push", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-frontend:$SHORT_SHA"]
+  - id: push-frontend
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-frontend"]
 
-  # --- Deploy backend (more memory for torch/mediapipe; 1 instance keeps the
-  #     in-memory session world warm for the demo) ---
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+  # --- Deploy backend ---
+  # 4Gi/2cpu for CPU inference; min=max=1 keeps the single in-process SessionHub
+  # authoritative and warm (see README "WebSockets on Cloud Run"). Env comma
+  # collisions in CORS_ORIGINS are avoided with the ^@^ delimiter.
+  - id: deploy-backend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args:
       - run
       - deploy
       - orguard-backend
-      - "--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-backend:$SHORT_SHA"
+      - "--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-backend:${_TAG}"
       - "--region=${_REGION}"
       - "--platform=managed"
       - "--allow-unauthenticated"
+      - "--port=8080"
       - "--memory=4Gi"
       - "--cpu=2"
       - "--min-instances=1"
       - "--max-instances=1"
+      - "--no-cpu-throttling"
       - "--timeout=3600"
+      - "--session-affinity"
+      # Current deployment: SQLite on the instance's local disk + local evidence
+      # storage (single always-on instance, so this is consistent). GEMINI_API_KEY
+      # comes from Secret Manager. To move to Cloud SQL + GCS, enable those APIs,
+      # create the `orguard-db-url` secret, then add:
+      #   --set-secrets=...,DB_URL=orguard-db-url:latest
+      #   --add-cloudsql-instances=<PROJECT:REGION:INSTANCE>
+      #   and switch STORAGE_BACKEND=gcs@GCS_BUCKET=<bucket>
+      # (see deploy/README.md §2.3/§2.4).
+      - "--set-env-vars=^@^STORAGE_BACKEND=${_STORAGE_BACKEND}@CORS_ORIGINS=${_CORS_ORIGINS}"
+      - "--set-secrets=GEMINI_API_KEY=orguard-gemini-key:latest"
 
-  # --- Deploy frontend ---
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+  # --- Deploy frontend (static nginx; can scale to zero) ---
+  - id: deploy-frontend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args:
       - run
       - deploy
       - orguard-frontend
-      - "--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-frontend:$SHORT_SHA"
+      - "--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-frontend:${_TAG}"
       - "--region=${_REGION}"
       - "--platform=managed"
       - "--allow-unauthenticated"
+      - "--port=8080"
+      - "--memory=256Mi"
+      - "--cpu=1"
+      - "--min-instances=0"
+      - "--max-instances=2"
 
 substitutions:
   _REGION: us-central1
   _AR: orguard
-  _API_URL: https://orguard-backend-REPLACE.run.app
+  # Image tag. `gcloud builds submit` from a local dir does not set $SHORT_SHA,
+  # so we default to a stable tag; override with _TAG=v1, a git sha, etc.
+  _TAG: latest
+  # Live Cloud Run URLs for project argus-502920. Both services already exist,
+  # so a single build pass is enough (no two-pass URL discovery needed).
+  _API_URL: https://orguard-backend-598370539694.us-central1.run.app
+  _CORS_ORIGINS: https://orguard-frontend-598370539694.us-central1.run.app
+  # "local" = SQLite + evidence on the instance disk (current setup).
+  # Switch to "gcs" once a bucket exists (see the deploy-backend comment).
+  _STORAGE_BACKEND: local
 
 options:
   machineType: E2_HIGHCPU_8
+  dynamicSubstitutions: true
+
 images:
-  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-backend:$SHORT_SHA"
-  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-frontend:$SHORT_SHA"
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-backend:${_TAG}"
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR}/orguard-frontend:${_TAG}"
+
+timeout: 3600s

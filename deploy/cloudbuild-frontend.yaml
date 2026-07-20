@@ -1,0 +1,21 @@
+# Build + push the frontend image with the backend URL baked in (split Cloud
+# Run mode). Deploy is done separately with user credentials.
+#
+#   gcloud builds submit ./frontend --config deploy/cloudbuild-frontend.yaml \
+#     --substitutions=_API_URL=https://orguard-backend-xxxxx.run.app
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - "--build-arg"
+      - "VITE_API_BASE=${_API_URL}"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/orguard/orguard-frontend:latest"
+      - "."
+  - name: gcr.io/cloud-builders/docker
+    args: ["push", "${_REGION}-docker.pkg.dev/$PROJECT_ID/orguard/orguard-frontend:latest"]
+substitutions:
+  _REGION: us-central1
+  _API_URL: ""
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/orguard/orguard-frontend:latest"

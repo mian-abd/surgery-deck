@@ -5,12 +5,37 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from .. import gemini
 from ..db import get_db
 from ..models import ProcedureSession, Zone
 from ..runtime import hub, get_pipeline
 from ..schemas import ZoneBulkIn, ZoneOut
 
 router = APIRouter()
+
+
+@router.post("/sessions/{session_id}/suggest-zones")
+async def suggest_zones(session_id: str, db: Session = Depends(get_db)) -> dict:
+    """Ask Gemini to propose zone polygons from the session's latest frame.
+
+    Suggestions are returned for the operator to accept or edit — nothing is
+    persisted here. Returns an empty list (never an error) when Gemini is
+    unavailable or no frame has arrived yet, so the UI can degrade quietly.
+    """
+    if not db.get(ProcedureSession, session_id):
+        raise HTTPException(404, "Session not found")
+
+    if not gemini.available():
+        return {"zones": [], "reason": "Gemini not configured"}
+
+    frame = hub.last_frame(session_id)
+    if not frame:
+        return {"zones": [], "reason": "No camera frame received yet"}
+
+    zones = await gemini.suggest_zones(frame)
+    if zones is None:
+        return {"zones": [], "reason": "Gemini could not analyze the frame"}
+    return {"zones": zones, "reason": ""}
 
 
 @router.get("/sessions/{session_id}/zones", response_model=list[ZoneOut])

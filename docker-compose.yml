@@ -1,27 +1,61 @@
-# Local full-stack run. Frontend proxies /api and /ws to backend at build time
-# via VITE_API_BASE=http://localhost:8080.
+# Local full-stack run:  docker compose up --build
+#
+# Same-origin setup: the frontend is built with an EMPTY VITE_API_BASE, so the
+# app uses relative URLs and nginx (in the frontend container) proxies /api,
+# /ws and /evidence to the backend. Open http://localhost:8081 — no CORS needed.
+#
+# Optional Postgres:  docker compose --profile pg up --build
+#   then set the backend DB_URL to the postgres service (see below).
 services:
   backend:
     build: ./backend
     ports:
-      - "8080:8080"
+      - "8080:8080"          # exposed for direct debugging (docs at /docs)
     environment:
+      # Default: SQLite on a named volume. To use the bundled Postgres instead,
+      # start with `--profile pg` and switch this to:
+      #   postgresql+psycopg2://orguard:orguard@db:5432/orguard
       DB_URL: sqlite:///./orguard.db
       STORAGE_BACKEND: local
+      # Same-origin: browser hits the frontend origin, so allow it for safety
+      # even though the proxy path does not require CORS.
       CORS_ORIGINS: http://localhost:8081,http://localhost:5173
     volumes:
       - ./backend/evidence:/app/evidence
       - model_cache:/app/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
   frontend:
     build:
       context: ./frontend
       args:
-        VITE_API_BASE: http://localhost:8080
+        VITE_API_BASE: ""    # empty -> relative URLs -> use the nginx proxy
     ports:
-      - "8081:80"
+      - "8081:8080"
+    environment:
+      PORT: "8080"
+      BACKEND_URL: http://backend:8080
     depends_on:
       - backend
 
+  # Optional Postgres (enable with:  docker compose --profile pg up)
+  db:
+    image: postgres:15-alpine
+    profiles: ["pg"]
+    environment:
+      POSTGRES_USER: orguard
+      POSTGRES_PASSWORD: orguard
+      POSTGRES_DB: orguard
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
 volumes:
   model_cache:
+  pg_data:

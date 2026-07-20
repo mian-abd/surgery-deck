@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ViewerStage from "../components/ViewerStage";
+import GeminiInsightBlock from "../components/GeminiInsight";
 import { api, Zone } from "../lib/api";
-import { AlertMessage, Detection, FrameMessage, HandPoint, SessionSocket } from "../lib/live";
+import {
+  AlertMessage,
+  DetectionsMessage,
+  Detection,
+  FrameMessage,
+  HandPoint,
+  SessionSocket,
+} from "../lib/live";
 import { store } from "../lib/store";
 
 const ZONE_TYPES = ["sterile", "nonsterile", "tray", "sink", "patient", "entry"];
@@ -28,29 +36,72 @@ export default function Monitor() {
   const [hands, setHands] = useState<HandPoint[][]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
   const [alerts, setAlerts] = useState<AlertMessage[]>([]);
+  const [demoRunning, setDemoRunning] = useState(false);
 
   // zone editor
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<number[][]>([]);
   const [zoneType, setZoneType] = useState("sterile");
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestNote, setSuggestNote] = useState("");
 
   useEffect(() => {
     if (!sessionId) return;
     api.getZones(sessionId).then(setZones).catch(() => {});
     const sock = new SessionSocket(sessionId, {
       onFrame: (m: FrameMessage) => {
-        setConnected(true);
+        setConnected(true); // a frame means a camera is actively streaming
         if (m.image) setFrame(m.image);
         if (m.camera_id) setCameraId(m.camera_id);
         if (m.fps != null) setFps(m.fps);
+      },
+      onDetections: (m: DetectionsMessage) => {
+        if (m.camera_id) setCameraId(m.camera_id);
         if (m.detections) setDetections(m.detections);
         if (m.hands) setHands(m.hands);
       },
+      onStatus: (up) => {
+        if (!up) setConnected(false); // socket dropped → not live until frames resume
+      },
       onAlert: (m) => setAlerts((a) => [m, ...a].slice(0, 50)),
+      // Gemini finishes analysing a beat after the alert fires — patch the
+      // matching card in place so the AI text appears live on screen.
+      onEventUpdate: (m) =>
+        setAlerts((a) =>
+          a.map((al) => (al.id === m.id ? { ...al, gemini: m.gemini } : al))
+        ),
     });
     sock.start();
     sockRef.current = sock;
     return () => sock.stop();
+  }, [sessionId]);
+
+  const startDemo = async () => {
+    if (!sessionId) return;
+    try {
+      await api.startDemo(sessionId);
+      setDemoRunning(true);
+      // demo seeds zones server-side; pull them in so the overlay shows them
+      setTimeout(() => api.getZones(sessionId).then(setZones).catch(() => {}), 1500);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+  const stopDemo = async () => {
+    if (!sessionId) return;
+    try {
+      await api.stopDemo(sessionId);
+    } finally {
+      setDemoRunning(false);
+    }
+  };
+
+  const [searchParams] = useSearchParams();
+  useEffect(() => {
+    if (sessionId && searchParams.get("demo") === "1") {
+      startDemo();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   const liveCounts = useMemo(() => {
@@ -60,6 +111,30 @@ export default function Monitor() {
       .forEach((d) => (c[d.label] = (c[d.label] || 0) + 1));
     return c;
   }, [detections]);
+
+  // Ask Gemini to read the current frame and propose zones. Suggestions are
+  // saved like hand-drawn ones so the operator can immediately edit/redraw.
+  const suggestZones = async () => {
+    if (!sessionId || !cameraId) return;
+    setSuggesting(true);
+    setSuggestNote("");
+    try {
+      const { zones: proposed, reason } = await api.suggestZones(sessionId);
+      if (!proposed.length) {
+        setSuggestNote(reason || "No zones proposed");
+        return;
+      }
+      const next = proposed.map((z) => ({ ...z, camera_id: cameraId }));
+      setZones(next);
+      await api.saveZones(sessionId, cameraId, next);
+      setSuggestNote(`✨ ${next.length} zones proposed — edit if needed`);
+    } catch (e) {
+      console.error(e);
+      setSuggestNote("Suggestion failed");
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   const finishZone = async () => {
     if (draft.length < 3 || !sessionId || !cameraId) return;
@@ -107,6 +182,15 @@ export default function Monitor() {
     <div className="grid lg:grid-cols-3 gap-6">
       <div className="lg:col-span-2 space-y-3">
         <div className="flex items-center gap-2 flex-wrap">
+          {!demoRunning ? (
+            <button onClick={startDemo} className="btn-primary">
+              ▶ Start live demo
+            </button>
+          ) : (
+            <button onClick={stopDemo} className="btn-ghost">
+              ■ Stop demo
+            </button>
+          )}
           <button onClick={() => snapshot("initial")} disabled={!connected} className="btn-ghost">
             Capture initial count
           </button>
@@ -119,7 +203,7 @@ export default function Monitor() {
                 <span className="text-emerald-400">●</span> live · {fps} fps
               </>
             ) : (
-              <span className="text-slate-500">no camera connected</span>
+              <span className="text-slate-500">no feed — click "Start live demo"</span>
             )}
           </span>
         </div>
@@ -137,13 +221,26 @@ export default function Monitor() {
         <div className="bg-panel border border-edge rounded-lg p-3 flex items-center gap-2 flex-wrap">
           <span className="text-xs text-slate-400">Zones:</span>
           {!editing ? (
-            <button
-              onClick={() => setEditing(true)}
-              disabled={!cameraId}
-              className="btn-ghost text-xs"
-            >
-              + Draw zone
-            </button>
+            <>
+              <button
+                onClick={() => setEditing(true)}
+                disabled={!cameraId}
+                className="btn-ghost text-xs"
+              >
+                + Draw zone
+              </button>
+              <button
+                onClick={suggestZones}
+                disabled={!cameraId || suggesting}
+                className="btn-ghost text-xs"
+                title="Ask Gemini to propose zones from the current frame"
+              >
+                {suggesting ? "✨ Analyzing…" : "✨ Suggest zones"}
+              </button>
+              {suggestNote && (
+                <span className="text-[11px] text-slate-500">{suggestNote}</span>
+              )}
+            </>
           ) : (
             <>
               <select
@@ -208,6 +305,7 @@ export default function Monitor() {
                 {a.description && (
                   <div className="text-xs text-slate-400 mt-0.5">{a.description}</div>
                 )}
+                <GeminiInsightBlock insight={a.gemini} compact />
                 <div className="text-[10px] uppercase tracking-wide text-slate-500 mt-1">
                   {a.severity}
                 </div>

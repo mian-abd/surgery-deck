@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import gemini
 from ..db import get_db
 from ..engine.report import build_report
 from ..models import Camera, ProcedureSession, SafetyEvent, InstrumentSnapshot
@@ -75,6 +76,26 @@ def bind_camera(session_id: str, camera_id: str, db: Session = Depends(get_db)) 
         raise HTTPException(404, "Session not found")
     hub.bind_camera(camera_id, session_id)
     return {"ok": True, "camera_id": camera_id, "session_id": session_id}
+
+
+# --- Live demo simulation (no camera/props required) ---
+@router.post("/sessions/{session_id}/demo/start")
+async def start_demo(session_id: str, db: Session = Depends(get_db)) -> dict:
+    """Start the scripted live-demo feed for a session (see app/demo.py)."""
+    if not db.get(ProcedureSession, session_id):
+        raise HTTPException(404, "Session not found")
+    from .. import demo
+
+    camera_id = await demo.start(session_id)
+    return {"ok": True, "camera_id": camera_id}
+
+
+@router.post("/sessions/{session_id}/demo/stop")
+async def stop_demo(session_id: str) -> dict:
+    from .. import demo
+
+    await demo.stop(session_id)
+    return {"ok": True}
 
 
 @router.post("/sessions/{session_id}/end", response_model=SessionOut)
@@ -149,8 +170,44 @@ def list_snapshots(session_id: str, db: Session = Depends(get_db)) -> list[Instr
 
 # --- Report ---
 @router.get("/sessions/{session_id}/report", response_model=ReportOut)
-def get_report(session_id: str, db: Session = Depends(get_db)) -> ReportOut:
+async def get_report(session_id: str, db: Session = Depends(get_db)) -> ReportOut:
     sess = db.get(ProcedureSession, session_id)
     if not sess:
         raise HTTPException(404, "Session not found")
-    return build_report(db, sess)
+
+    # Build the deterministic report first, then ask Gemini to narrate it. The
+    # summary is cached per (session, event count); a Gemini failure returns
+    # None and the report simply renders without the narrative block.
+    report = build_report(db, sess)
+    summary = await gemini.summarize_session(
+        {
+            "procedure": sess.procedure_name,
+            "room": sess.room_name,
+            "duration_minutes": report.duration_minutes,
+            "initial_counts": report.initial_counts,
+            "final_counts": report.final_counts,
+            "count_difference": report.count_difference,
+            "hygiene_observed": report.hygiene_events,
+            "hygiene_violations": report.hygiene_violations,
+            "sterile_breaches": report.breach_alerts,
+            "critical": report.critical_count,
+            "warnings": report.warning_count,
+            "unreviewed": report.pending_alerts,
+            "events": [
+                {
+                    "time": e.occurred_at.isoformat(),
+                    "type": e.event_type,
+                    "severity": e.severity,
+                    "title": e.title,
+                    "review_status": e.review_status,
+                }
+                for e in report.events
+            ],
+        },
+        cache_key=session_id,
+        event_count=report.total_events,
+    )
+    if summary:
+        report.gemini_summary = summary.get("summary")
+        report.gemini_key_risks = summary.get("key_risks") or []
+    return report

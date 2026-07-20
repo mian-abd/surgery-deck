@@ -28,14 +28,17 @@ def main() -> None:
     print(f"process() ok — detections={len(out['detections'])} hands={len(out['hands'])} "
           f"alerts={len(out['alerts'])}")
 
-    # try a real image for an actual detection
+    # try a real image for an actual detection (uses the bundled ultralytics
+    # sample so it works offline / without a network fetch)
     try:
-        import urllib.request
+        import os
         import cv2
-        urllib.request.urlretrieve("https://ultralytics.com/images/bus.jpg", "bus.jpg")
-        img = cv2.imread("bus.jpg")
+        import ultralytics
+        sample = os.path.join(os.path.dirname(ultralytics.__file__), "assets", "bus.jpg")
+        img = cv2.imread(sample)
         out2 = p.process("sess1", "cam1", img)
         labels = [d["label"] for d in out2["detections"]]
+        assert any(l == "person" for l in labels), f"expected a person, got {labels}"
         print(f"real image detections: {labels}")
     except Exception as exc:
         print(f"(skipped real-image test: {exc})")

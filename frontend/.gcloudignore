@@ -1,0 +1,6 @@
+# Keep the Cloud Build upload small. The Docker build runs `npm ci` from
+# package-lock.json, so node_modules/dist/android are not needed in the context.
+node_modules/
+dist/
+android/
+.gcloudignore

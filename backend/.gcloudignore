@@ -1,0 +1,14 @@
+# Keep the Cloud Build upload tiny: the Dockerfile only needs requirements.txt
+# and app/. Exclude the local venv, downloaded weights, evidence, and db.
+.venv/
+__pycache__/
+*.pyc
+evidence/
+*.db
+models/
+yolo11n.pt
+tools/
+bus.jpg
+.env
+.gcloudignore
+.dockerignore

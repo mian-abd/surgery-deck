@@ -26,6 +26,23 @@ supervision==0.25.1
 mediapipe==0.10.18
 shapely==2.0.6
 
+# Surgical-instrument model loading (SURGICAL_MODEL=doccheck):
+#   yolov5 7.0.14 loads the CLASSIC YOLOv5 checkpoint that ultralytics.YOLO cannot.
+#   Version constraints found to be REQUIRED on this torch/py stack:
+#   - huggingface_hub<0.25: yolov5 7.0.14 imports huggingface_hub.utils._errors,
+#     removed in hub 0.25+ (1.x). Pin to a compatible release.
+#   - setuptools<81: yolov5 uses pkg_resources, removed from setuptools 81+.
+#   - torch>=2.6 defaults torch.load(weights_only=True); detector.load_yolov5_model
+#     shims weights_only=False to load the (trusted) DocCheck DetectionModel pickle.
+yolov5==7.0.14
+huggingface_hub==0.24.7
+setuptools<81
+
+# --- Gemini (hackathon requirement; degrades gracefully without a key) ---
+# Note: pulls a newer pydantic (2.13.x) than the pin above; verified compatible
+# with this FastAPI version.
+google-genai==2.12.1
+
 # --- Optional prod backends (Phase 5) ---
 # psycopg2-binary==2.9.10        # Cloud SQL (Postgres)
 # google-cloud-storage==2.19.0   # GCS evidence storage

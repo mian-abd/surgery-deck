@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from .. import gemini
 from ..config import settings
 from ..db import SessionLocal
 from ..engine.events import evaluate_hygiene, evaluate_instruments
@@ -190,9 +191,37 @@ class Pipeline:
                 db.add(event)
                 db.commit()
                 alerts.append(_alert_dict(event))
+
+                # Gemini narration + visual second opinion, in the background so
+                # the realtime loop is never blocked. No-op without an API key.
+                gemini.enrich_event_bg(
+                    event.id,
+                    session_id,
+                    {
+                        "event_type": event.event_type,
+                        "severity": event.severity,
+                        "title": event.title,
+                        "rule_description": event.description,
+                        "rule_confidence": event.confidence,
+                        "camera_id": camera_id,
+                        "detail": d.get("meta", {}),
+                    },
+                    _jpeg_of(frame),
+                )
         finally:
             db.close()
         return alerts
+
+
+def _jpeg_of(frame) -> bytes | None:
+    """Encode a BGR frame to JPEG bytes for Gemini. None on failure."""
+    try:
+        import cv2
+
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return buf.tobytes() if ok else None
+    except Exception:
+        return None
 
 
 def _alert_dict(event: SafetyEvent) -> dict:

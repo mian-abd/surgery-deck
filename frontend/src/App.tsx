@@ -23,7 +23,7 @@ function Nav() {
       <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-3">
         <div className="flex items-center gap-2 mr-4">
           <span className="text-sky-400 text-lg">◆</span>
-          <span className="font-semibold tracking-tight">ORGuard</span>
+          <span className="font-semibold tracking-tight">Argus</span>
           <span className="text-xs text-slate-500">Surgical Safety Monitor</span>
         </div>
         <nav className="flex gap-1">

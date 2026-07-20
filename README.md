@@ -11,11 +11,24 @@ real-time safety alerts.
 
 ## What it does (MVP)
 - **Live feed relay** — camera device → backend → viewer devices (viewer-only).
-- **Instrument detection + tracking** — YOLO (ultralytics) + ByteTrack persistent IDs.
+  Source can be a **live webcam** *or* an **uploaded video file** (same pipeline),
+  with an adjustable target frame rate.
+- **Instrument detection + tracking** — COCO YOLO for people + a real
+  **surgical-instrument model** (DocCheck YOLOv5, 12 classes → forceps / scalpel /
+  scissors / needle) behind a swappable detector, with ByteTrack persistent IDs.
 - **Hand-hygiene check** — MediaPipe hands + sink-zone dwell before sterile entry.
 - **Sterile-zone breach** — instrument crossing sterile ⇄ nonsterile → contamination alert.
 - **Instrument count** — initial vs final snapshot → count-mismatch alert.
-- **Dashboard / review / report** — live alerts, human confirm/dismiss, end-of-session report.
+- **Dashboard / review / report** — live alerts, human confirm/dismiss, printable
+  end-of-session report with a critical-event timeline.
+
+### Performance note (why it's smooth now)
+Inference (person + instrument + hands) costs ~220 ms/frame on CPU (~4.5 fps).
+The ingest socket **decouples** three stages so latency never grows: raw frames
+relay to viewers immediately (smooth video at the ingest rate), while inference
+runs in a worker **thread on the latest frame only** (stale frames are dropped)
+and detection overlays broadcast on their own channel as they complete. Higher
+detection fps = fewer models, `DETECT_EVERY_N>1`, or a GPU (see `deploy/`).
 
 ## Architecture
 ```
@@ -48,9 +61,17 @@ py -3.10 -m venv .venv
 First start downloads `yolo11n.pt` (~5 MB) and initializes MediaPipe.
 Health check: http://127.0.0.1:8000/health → `"perception": true`.
 
-Optional: drop a fine-tuned/downloaded surgical model at `backend/models/instrument.pt`
-and it is auto-loaded (its classes are added to detection). Without it, the demo
-uses COCO `person` + `scissors`/`knife` as stand-in instruments.
+**Surgical instrument model.** `SURGICAL_MODEL=doccheck` (the default) auto-downloads
+the DocCheck YOLOv5 weights (~93 MB, CC-BY-NC, non-commercial) on first frame. To
+pre-fetch + sanity-check them:
+```powershell
+.\.venv\Scripts\python.exe tools\download_model.py
+```
+Alternatives: `SURGICAL_MODEL=ultralytics` loads a fine-tuned `backend/models/instrument.pt`
+(see `backend/tools/train_surgical.md` to train one on a public dataset); `SURGICAL_MODEL=coco`
+uses only COCO `scissors`/`knife` stand-ins. Person detection (for hygiene logic) is
+always on. If the surgical deps/weights are unavailable the server degrades to COCO
+and keeps running.
 
 ### 2. Frontend
 ```powershell
@@ -61,7 +82,8 @@ npm run dev      # http://localhost:5173  (proxies /api and /ws to :8000)
 
 ### 3. Demo flow (matches PRD §10)
 1. **Sessions** → create "Simulated Appendectomy" → it opens the Monitor (viewer).
-2. On the camera device, open **Camera** (`/capture`), select the session, **Start streaming**.
+2. On the camera device, open **Camera** (`/capture`), select the session, pick a
+   **source** (live webcam or 🎞 upload a video file), set the target fps, **Start streaming**.
 3. Back on the viewer, **Draw zone** → outline the sterile field, tray, nonsterile
    table, and sink; save each.
 4. Place instruments on the tray → **Capture initial count**.
@@ -86,8 +108,12 @@ $env:PYTHONPATH = "."
 ```
 
 ## Android app & cloud deploy
-See [`deploy/README.md`](deploy/README.md) for building the Android APK (Capacitor)
-and deploying the backend to Google Cloud (Cloud Run + Cloud SQL + GCS).
+- **Android viewer APK** — see [`deploy/ANDROID.md`](deploy/ANDROID.md) for the exact
+  Capacitor build steps (build web with `VITE_API_BASE` → `cap sync` → `gradlew assembleDebug`).
+- **Google Cloud** — see [`deploy/README.md`](deploy/README.md) for the Cloud Run +
+  Cloud SQL (Postgres) + GCS runbook. Note: the backend keeps live session state in
+  memory, so run a **single always-on instance** (`--min/max-instances=1 --workers 1`);
+  WebSockets need `--timeout=3600 --session-affinity`.
 
 ## Configuration
 Backend reads `.env` (see `backend/.env.example`): `DB_URL` (SQLite ↔ Postgres),

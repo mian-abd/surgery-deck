@@ -41,17 +41,25 @@ async def main() -> None:
     got = {}
 
     async def viewer():
+        # Frames relay immediately; detections arrive on their own channel once
+        # inference (lazy model load on first frame) catches up — allow more time.
         async with websockets.connect(f"{WS}/ws/session/{sess['id']}") as ws:
             await ws.send("hello")
-            while "frame" not in got:
-                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-                if msg.get("type") == "frame":
+            deadline_ok = False
+            while not deadline_ok:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=20))
+                t = msg.get("type")
+                if t == "frame" and "frame" not in got:
                     got["frame"] = msg
+                elif t == "detections" and "detections" not in got:
+                    got["detections"] = msg
+                deadline_ok = "frame" in got and "detections" in got
 
     async def camera():
         await asyncio.sleep(0.3)  # let viewer subscribe first
         async with websockets.connect(f"{WS}/ws/ingest/{cam['id']}") as ws:
-            for _ in range(5):
+            # stream long enough for the pipeline to build + emit detections
+            for _ in range(40):
                 await ws.send(make_jpeg())
                 await asyncio.wait_for(ws.recv(), timeout=5)  # ack
                 await asyncio.sleep(0.1)
@@ -63,8 +71,10 @@ async def main() -> None:
     assert frame.get("image", "").startswith("data:image/jpeg;base64,"), "no relayed image"
     raw = base64.b64decode(frame["image"].split(",", 1)[1])
     assert len(raw) > 100, "relayed image too small"
-    print(f"OK relay: viewer got frame {frame['w']}x{frame['h']}, image bytes={len(raw)}")
-    print(f"   detections field present: {'detections' in frame}")
+    dets = got.get("detections")
+    assert dets is not None, "viewer never received a detections message (decoupled channel)"
+    print(f"OK relay: viewer got frame image bytes={len(raw)}, fps={frame.get('fps')}")
+    print(f"   detections channel OK: {len(dets.get('detections', []))} detection(s) in latest msg")
 
 
 if __name__ == "__main__":

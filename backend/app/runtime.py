@@ -19,6 +19,7 @@ class SessionHub:
     def __init__(self) -> None:
         self._clients: dict[str, set[WebSocket]] = defaultdict(set)
         self._camera_session: dict[str, str] = {}
+        self._last_frame: dict[str, bytes] = {}
         self._lock = asyncio.Lock()
 
     # --- camera binding ---
@@ -27,6 +28,13 @@ class SessionHub:
 
     def session_for_camera(self, camera_id: str) -> str | None:
         return self._camera_session.get(camera_id)
+
+    # --- most recent frame per session (used for Gemini zone suggestions) ---
+    def remember_frame(self, session_id: str, jpeg: bytes) -> None:
+        self._last_frame[session_id] = jpeg
+
+    def last_frame(self, session_id: str) -> bytes | None:
+        return self._last_frame.get(session_id)
 
     # --- live dashboard clients ---
     async def connect(self, session_id: str, ws: WebSocket) -> None:

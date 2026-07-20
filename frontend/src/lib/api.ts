@@ -98,6 +98,14 @@ export const api = {
       method: "POST",
     }).then(j<{ ok: boolean }>),
 
+  // Gemini looks at the latest frame and proposes zone polygons for the
+  // operator to accept. Never errors — returns [] with a reason when
+  // Gemini is unconfigured or no frame has arrived yet.
+  suggestZones: (session_id: string) =>
+    f(`/api/sessions/${session_id}/suggest-zones`, { method: "POST" }).then(
+      j<{ zones: Zone[]; reason: string }>
+    ),
+
   getZones: (session_id: string) =>
     f(`/api/sessions/${session_id}/zones`).then(j<Zone[]>),
   saveZones: (session_id: string, camera_id: string, zones: Zone[]) =>
@@ -125,4 +133,13 @@ export const api = {
     f(`/api/sessions/${session_id}/snapshot?snapshot_type=${snapshot_type}`, {
       method: "POST",
     }).then(j<Snapshot>),
+
+  startDemo: (session_id: string) =>
+    f(`/api/sessions/${session_id}/demo/start`, { method: "POST" }).then(
+      j<{ ok: boolean; camera_id: string }>
+    ),
+  stopDemo: (session_id: string) =>
+    f(`/api/sessions/${session_id}/demo/stop`, { method: "POST" }).then(
+      j<{ ok: boolean }>
+    ),
 };

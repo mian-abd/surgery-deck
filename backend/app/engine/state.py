@@ -53,11 +53,19 @@ class SessionWorld:
     def zones(self, camera_id: str) -> ZoneSet:
         return self.zones_by_camera.setdefault(camera_id, ZoneSet())
 
-    def current_counts(self) -> dict[str, int]:
-        """Live instrument counts by label from active tracks."""
+    def current_counts(self, ttl_sec: float = 2.5) -> dict[str, int]:
+        """Live instrument counts by label from *currently-visible* tracks.
+
+        Tracks that haven't been seen within ``ttl_sec`` are excluded so a
+        snapshot reflects what is on the tray now, not every instrument ever
+        seen during the session (which would inflate the count over time).
+        """
         counts: dict[str, int] = {}
+        now = time.time()
         for t in self.tracks.values():
             if t.label in NON_INSTRUMENT:
+                continue
+            if now - t.last_seen > ttl_sec:
                 continue
             counts[t.label] = counts.get(t.label, 0) + 1
         return counts
