@@ -7,7 +7,9 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-multipart==0.0.20
-pydantic==2.10.4
+# google-genai requires pydantic>=2.12.5, so this pin is raised from 2.10.4.
+# Verified working with fastapi 0.115.6 + pydantic-settings 2.7.1.
+pydantic==2.13.4
 pydantic-settings==2.7.1
 python-dotenv==1.0.1
 SQLAlchemy==2.0.36
@@ -39,8 +41,6 @@ huggingface_hub==0.24.7
 setuptools<81
 
 # --- Gemini (hackathon requirement; degrades gracefully without a key) ---
-# Note: pulls a newer pydantic (2.13.x) than the pin above; verified compatible
-# with this FastAPI version.
 google-genai==2.12.1
 
 # --- Optional prod backends (Phase 5) ---
