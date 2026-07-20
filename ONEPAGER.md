@@ -30,9 +30,12 @@ today's OR camera systems mostly *record for later* rather than *warn in the mom
 **How it works.** Camera → computer vision (**YOLO11** detection + **ByteTrack**
 persistent IDs + **MediaPipe** hand landmarks) → a zone/state engine that reasons
 about *transitions*, not single frames → **Gemini** turns each raw state change
-into a clinician-readable explanation and writes the end-of-session safety report
-→ a human confirms or dismisses. **Decision-support, not diagnosis** — which keeps
-us out of the autonomous-medical-device regulatory path.
+into a clinician-readable explanation, independently re-examines the evidence
+frame as a second opinion on whether the alert is real, and writes the
+end-of-session safety report → a human confirms or dismisses. **Decision-support,
+not diagnosis** — which keeps us out of the autonomous-medical-device regulatory
+path. The deterministic rule engine stands alone: if Gemini is unreachable, every
+alert still fires.
 
 **Why now.** Ambient AI in the OR is funded and accelerating (**Apella $80M**,
 **Caresyntax $302M**). Gemini makes real-time scene reasoning cheap enough to run
@@ -55,7 +58,10 @@ product. ROI is the whole sale — preventing **one** retained item pays for
 camera → cloud → viewer streaming over WebSockets, real-time detection and
 multi-object tracking with persistent IDs, operator-drawn zone reasoning, four
 alert types each with a saved evidence frame, human review (confirm/dismiss), and
-an auto-generated end-of-session report. Android viewer app via Capacitor.
+an auto-generated end-of-session report. **Gemini 3.5 Flash** narrates every alert
+and independently re-checks the evidence frame — in testing it correctly flagged a
+detection the image did not support, which is exactly the false-positive class
+that makes safety alerts get ignored. Android viewer app via Capacitor.
 Pre-revenue. *Next: fine-tune the instrument model on real surgical trays.*
 
 **Team**
